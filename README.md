@@ -50,11 +50,11 @@ python3 checker.py -f failed.txt
 ```
 123.123.123.123 example.com 404 969 No Title
 ```
-- 123.123.123.123: Resolved IP address
-- example.com: Domain name
-- 404: HTTP response code
-- 969: Response length (in bytes)
-- No Title: HTML page title (if any)
+- `123.123.123.123`: Resolved IP address
+- `example.com:` Domain name
+- `404:` HTTP response code
+- `969:` Response length (in bytes)
+- `No Title:` HTML page title (if any)
 
 ### License
 MIT License
