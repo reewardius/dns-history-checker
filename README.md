@@ -22,7 +22,7 @@ This will create a `failed.txt` file containing domains that failed to respond.
 
 **Step 2:** Check DNS A Records and HTTP Responses
 
-Run the checker.py script to verify the domains against the DNS History database and test HTTP response codes.
+Run the `dns-history-checker.py` script to verify the domains against the DNS History database and test HTTP response codes.
 ```
 > python dns-history-checker.py -h
 usage: dns-history-checker.py [-h] (-d DOMAIN | -f FILE) [-v]
