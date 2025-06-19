@@ -1,4 +1,4 @@
-# inactive-hosts-checker
+# dns-history-checker
 A simple utility for identifying inactive or misconfigured domains. It helps extract failed domain resolutions and then verifies their DNS A records and HTTP responses using the DNS History website.
 
 #### Features
