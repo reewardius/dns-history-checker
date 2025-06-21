@@ -30,17 +30,19 @@ def clean_domain(domain):
         return domain.strip()
 
 def get_a_record(domain, verbose=False):
-    """Fetch A records by scraping DNS History website"""
+    """Fetch unique A records by scraping DNS History website"""
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
     }
+    
+    # Use a set to store unique IPs
+    ip_addresses = set()
     
     # Try first page
     url = f"https://dnshistory.org/dns-records/{domain}"
     if verbose:
         print(f"  Sending GET request to {url}", file=sys.stderr)
     
-    ip_addresses = []
     try:
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
@@ -60,7 +62,7 @@ def get_a_record(domain, verbose=False):
                 links = element.find_all('a', href=True)
                 for link in links:
                     if link.text.strip().replace('.', '').isdigit():  # Check if the text is an IP address
-                        ip_addresses.append(link.text.strip())
+                        ip_addresses.add(link.text.strip())  # Add to set for deduplication
                         if verbose:
                             print(f"  Found IP on first page: {link.text.strip()}", file=sys.stderr)
     except (requests.RequestException, ValueError) as e:
@@ -87,17 +89,17 @@ def get_a_record(domain, verbose=False):
                 links = p.find_all('a', href=True)
                 for link in links:
                     if link.text.strip().replace('.', '').isdigit():  # Check if the text is an IP address
-                        ip_addresses.append(link.text.strip())
+                        ip_addresses.add(link.text.strip())  # Add to set for deduplication
                         if verbose:
                             print(f"  Found IP on second page: {link.text.strip()}", file=sys.stderr)
         except (requests.RequestException, ValueError) as e:
             if verbose:
                 print(f"  Error fetching A records from second page for {domain}: {e}", file=sys.stderr)
     
-    return ip_addresses
+    return list(ip_addresses)
 
 def make_http_request(ip, domain, verbose=False):
-    """Make HTTP request with specified Host header"""
+    """Make HTTP request with specified Host header and check for Cloudflare"""
     headers = {"Host": domain}
     session = requests.Session()
     session.mount('https://', CustomAdapter())
@@ -120,24 +122,31 @@ def make_http_request(ip, domain, verbose=False):
         if response.status_code not in (200, 404):
             if verbose:
                 print(f"  Skipping HTTPS response due to status code {response.status_code}", file=sys.stderr)
-            return None
+        else:
+            content_length = len(response.content)
+            title = None
+            if response.headers.get('content-type', '').startswith('text/html'):
+                soup = BeautifulSoup(response.content, 'html.parser')
+                title_tag = soup.find('title')
+                if title_tag:
+                    title = title_tag.text.strip().replace('\n', ' ').replace('\r', ' ')
+                    if verbose:
+                        print(f"  Found title: {title}", file=sys.stderr)
             
-        content_length = len(response.content)
-        title = None
-        if response.headers.get('content-type', '').startswith('text/html'):
-            soup = BeautifulSoup(response.content, 'html.parser')
-            title_tag = soup.find('title')
-            if title_tag:
-                title = title_tag.text.strip().replace('\n', ' ').replace('\r', ' ')
-                if verbose:
-                    print(f"  Found title: {title}", file=sys.stderr)
+            # Check for Cloudflare in Server header
+            server_header = response.headers.get('Server', '').lower()
+            cloudflare = 'YES' if 'cloudflare' in server_header else 'NO'
+            if verbose:
+                print(f"  Cloudflare check: {cloudflare}", file=sys.stderr)
                 
-        return {
-            'status_code': response.status_code,
-            'content_length': content_length,
-            'title': title or 'No Title',
-            'final_url': response.url
-        }
+            return {
+                'status_code': response.status_code,
+                'content_length': content_length,
+                'title': title or 'No Title',
+                'final_url': response.url,
+                'cloudflare': cloudflare,
+                'protocol': 'https'
+            }
     except requests.RequestException as e:
         if verbose:
             print(f"  HTTPS request failed: {e}", file=sys.stderr)
@@ -170,23 +179,31 @@ def make_http_request(ip, domain, verbose=False):
                 title = title_tag.text.strip().replace('\n', ' ').replace('\r', ' ')
                 if verbose:
                     print(f"  Found title: {title}", file=sys.stderr)
+        
+        # Check for Cloudflare in Server header
+        server_header = response.headers.get('Server', '').lower()
+        cloudflare = 'YES' if 'cloudflare' in server_header else 'NO'
+        if verbose:
+            print(f"  Cloudflare check: {cloudflare}", file=sys.stderr)
                 
         return {
             'status_code': response.status_code,
             'content_length': content_length,
             'title': title or 'No Title',
-            'final_url': response.url
+            'final_url': response.url,
+            'cloudflare': cloudflare,
+            'protocol': 'http'
         }
     except requests.RequestException as e:
         if verbose:
             print(f"  HTTP request failed: {e}", file=sys.stderr)
         return None
 
-def generate_advanced_commands(ip, domain):
-    """Generate nuclei and ffuf commands for successful results"""
+def generate_advanced_commands(ip, domain, protocol):
+    """Generate nuclei and ffuf commands for successful results using the correct protocol"""
     commands = []
-    nuclei_cmd = f'nuclei -u https://{ip} -H "Host: {domain}" -rl 100 -c 25 -es unknown'
-    ffuf_cmd = f'ffuf -u https://{ip}/FUZZ -H "Host: {domain}" -mc 200 -w top.txt -ac -fs 0'
+    nuclei_cmd = f'nuclei -u {protocol}://{ip} -H "Host: {domain}" -rl 100 -c 25 -es unknown'
+    ffuf_cmd = f'ffuf -u {protocol}://{ip}/FUZZ -H "Host: {domain}" -mc 200 -w top.txt -ac -fs 0'
     commands.append(nuclei_cmd)
     commands.append(ffuf_cmd)
     return commands
@@ -230,6 +247,9 @@ def main():
     # Counter for findings
     finding_count = 0
     
+    # Track seen results to avoid duplicates
+    seen_results = set()
+    
     for domain in domains:
         cleaned_domain = clean_domain(domain)
         
@@ -244,7 +264,7 @@ def main():
             continue
             
         if args.verbose:
-            print(f"  Found {len(ip_addresses)} IP addresses", file=sys.stderr)
+            print(f"  Found {len(ip_addresses)} unique IP addresses", file=sys.stderr)
             
         for ip in ip_addresses:
             if args.verbose:
@@ -252,16 +272,24 @@ def main():
                 
             result = make_http_request(ip, cleaned_domain, args.verbose)
             if result:
+                # Create a unique key for the result to check for duplicates
+                result_key = (ip, cleaned_domain, result['status_code'], result['content_length'], result['title'], result['cloudflare'])
+                if result_key in seen_results:
+                    if args.verbose:
+                        print(f"  Skipping duplicate result for {ip} {cleaned_domain}", file=sys.stderr)
+                    continue
+                seen_results.add(result_key)
+                
                 finding_count += 1
                 output_lines = [
                     f"\nFinding №{finding_count} {cleaned_domain}\n",
-                    f"{ip} {cleaned_domain} {result['status_code']} {result['content_length']} {result['title']}\n"
+                    f"{ip} {cleaned_domain} {result['status_code']} {result['content_length']} {result['title']} (Cloudflare: {result['cloudflare']})\n"
                 ]
                 
                 # Add advanced commands if flag is set
                 if args.advanced:
                     output_lines.append("Advanced Commands:\n")
-                    for cmd in generate_advanced_commands(ip, cleaned_domain):
+                    for cmd in generate_advanced_commands(ip, cleaned_domain, result['protocol']):
                         output_lines.append(f"{cmd}\n")
                 
                 # Add separator
