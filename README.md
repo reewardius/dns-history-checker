@@ -24,30 +24,36 @@ This will create a `failed.txt` file containing domains that failed to respond.
 
 Run the `dns-history-checker.py` script to verify the domains against the DNS History database and test HTTP response codes.
 ```
-> python dns-history-checker.py -h
-usage: dns-history-checker.py [-h] (-d DOMAIN | -f FILE) [-v]
+usage: dns-history-checker.py [-h] (-d DOMAIN | -f FILE) [-v] [-a] [-o OUTPUT]
 
 Check DNS A records and HTTP responses using DNS History website
 
 optional arguments:
-  -h, --help                   # Show this help message and exit
-  -d DOMAIN, --domain DOMAIN   # Single domain to check
-  -f FILE, --file FILE         # File containing list of domains
-  -v, --verbose                # Show detailed debug output
+  -h, --help                      # Show this help message and exit
+  -d DOMAIN, --domain DOMAIN      # Single domain to check
+  -f FILE, --file FILE            # File containing list of domains
+  -v, --verbose                   # Show detailed debug output
+  -a, --advanced                  # Generate nuclei and ffuf commands for successful results
+  -o OUTPUT, --output OUTPUT      # Output file to save results
 ```
 ### Examples
 
 **Check a single domain:**
 ```
-python3 dns-history-checker.py -d domain.com -v
+python3 dns-history-checker.py -d domain.com -a -v
 ```
 **Check multiple domains from a file:**
 ```
-python3 dns-history-checker.py -f failed.txt
+python3 dns-history-checker.py -f failed.txt -a -o results.txt
 ```
 **Output Format:**
 ```
+Finding №1 example.com
 123.123.123.123 example.com 404 969 No Title
+
+Advanced Commands:
+nuclei -u https://123.123.123.123 -H "Host: example.com" -rl 100 -c 25 -es unknown
+ffuf -u https://123.123.123.123/FUZZ -H "Host: example.com" -mc 200 -w top.txt -ac -fs 0
 ```
 - `123.123.123.123`: Resolved IP address
 - `example.com:` Domain name
