@@ -55,7 +55,7 @@ Advanced Commands:
 nuclei -u https://123.123.123.123 -H "Host: example.com" -rl 100 -c 25 -es unknown
 ffuf -u https://123.123.123.123/FUZZ -H "Host: example.com" -mc 200 -w top.txt -ac -fs 0
 ```
-- `123.123.123.123`: Resolved IP address
+- `123.123.123.123`: History IP address
 - `example.com:` Domain name
 - `404:` HTTP response code
 - `969:` Response length (in bytes)
