@@ -49,7 +49,7 @@ python3 dns-history-checker.py -f failed.txt -a -o results.txt
 **Output Format:**
 ```
 Finding №1 example.com
-123.123.123.123 example.com 404 969 No Title
+123.123.123.123 example.com 404 969 No Title (Cloudflare: NO)
 
 Advanced Commands:
 nuclei -u https://123.123.123.123 -H "Host: example.com" -rl 100 -c 25 -es unknown
