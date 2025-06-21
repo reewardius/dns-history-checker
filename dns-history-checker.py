@@ -182,6 +182,15 @@ def make_http_request(ip, domain, verbose=False):
             print(f"  HTTP request failed: {e}", file=sys.stderr)
         return None
 
+def generate_advanced_commands(ip, domain):
+    """Generate nuclei and ffuf commands for successful results"""
+    commands = []
+    nuclei_cmd = f'nuclei -u https://{ip} -H "Host: {domain}" -rl 100 -c 25 -es unknown'
+    ffuf_cmd = f'ffuf -u https://{ip}/FUZZ -H "Host: {domain}" -mc 200 -w top.txt -ac -fs 0'
+    commands.append(nuclei_cmd)
+    commands.append(ffuf_cmd)
+    return commands
+
 def main():
     parser = argparse.ArgumentParser(description='Check DNS A records and HTTP responses using DNS History website')
     group = parser.add_mutually_exclusive_group(required=True)
@@ -189,6 +198,9 @@ def main():
     group.add_argument('-f', '--file', help='File containing list of domains')
     parser.add_argument('-v', '--verbose', action='store_true',
                        help='Show detailed debug output')
+    parser.add_argument('-a', '--advanced', action='store_true',
+                       help='Generate nuclei and ffuf commands for successful results')
+    parser.add_argument('-o', '--output', help='Output file to save results')
     args = parser.parse_args()
     
     # Determine domains to process
@@ -205,6 +217,18 @@ def main():
         except Exception as e:
             print(f"Error reading file: {e}", file=sys.stderr)
             sys.exit(1)
+    
+    # Prepare output file if specified
+    output_file = None
+    if args.output:
+        try:
+            output_file = open(args.output, 'w', encoding='utf-8')
+        except Exception as e:
+            print(f"Error opening output file: {e}", file=sys.stderr)
+            sys.exit(1)
+    
+    # Counter for findings
+    finding_count = 0
     
     for domain in domains:
         cleaned_domain = clean_domain(domain)
@@ -228,9 +252,36 @@ def main():
                 
             result = make_http_request(ip, cleaned_domain, args.verbose)
             if result:
-                print(f"{ip} {cleaned_domain} {result['status_code']} {result['content_length']} {result['title']}")
+                finding_count += 1
+                output_lines = [
+                    f"\nFinding №{finding_count} {cleaned_domain}\n",
+                    f"{ip} {cleaned_domain} {result['status_code']} {result['content_length']} {result['title']}\n"
+                ]
+                
+                # Add advanced commands if flag is set
+                if args.advanced:
+                    output_lines.append("Advanced Commands:\n")
+                    for cmd in generate_advanced_commands(ip, cleaned_domain):
+                        output_lines.append(f"{cmd}\n")
+                
+                # Add separator
+                output_lines.append("######\n")
+                
+                # Print to console
+                for line in output_lines:
+                    print(line.strip())
+                
+                # Write to output file if specified
+                if output_file:
+                    for line in output_lines:
+                        output_file.write(line)
+                
             elif args.verbose:
                 print(f"  No response from {ip}", file=sys.stderr)
+    
+    # Close output file if opened
+    if output_file:
+        output_file.close()
 
 if __name__ == "__main__":
     main()
