@@ -40,7 +40,7 @@ optional arguments:
 
 **Check a single domain:**
 ```
-python3 dns-history-checker.py -d domain.com -a -v
+python3 dns-history-checker.py -d example.com -a -v
 ```
 **Check multiple domains from a file:**
 ```
