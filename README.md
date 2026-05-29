@@ -1,65 +1,64 @@
 # dns-history-checker
-A simple utility for identifying inactive or misconfigured domains. It helps extract failed domain resolutions and then verifies their DNS A records and HTTP responses using the DNS History website.
 
-#### Features
-- Extract failed HTTP probes from a list of subdomains.
-- Check DNS A records and HTTP responses for each domain.
-- Optional verbose mode for detailed inspection.
-- Suitable for recon workflows and domain hygiene.
+Discovers real origin IPs hidden behind Cloudflare and other CDNs using historical DNS data from the [SecurityTrails API](https://securitytrails.com). Probes each IP directly with a spoofed `Host` header to confirm accessibility.
 
-#### Requirements
-- Python 3.6+
-- `requests`, `bs4`, `argparse`
----
+## Requirements
 
-**Step 1:** Get Failed Resolve Domains
+- Python 3.8+
+- [SecurityTrails API key](https://securitytrails.com/app/account/credentials) (free tier: 50 queries/month)
 
-Use `httpx` to probe subdomains and extract those that failed to resolve:
+```bash
+pip install requests beautifulsoup4
 ```
-httpx -l subs.txt -probe | grep FAILED | awk '{gsub(/^https?:\/\//, "", $1); split($1, a, "/"); print a[1]}' > failed.txt
-```
-This will create a `failed.txt` file containing domains that failed to respond.
 
-**Step 2:** Check DNS A Records and HTTP Responses
+## Usage
 
-Run the `dns-history-checker.py` script to verify the domains against the DNS History database and test HTTP response codes.
 ```
-usage: dns-history-checker.py [-h] (-d DOMAIN | -f FILE) [-v] [-a] [-o OUTPUT]
+python dns-history-checker.py (-d DOMAIN | -f FILE) -k API_KEY [-v] [-a] [-o OUTPUT]
+```
 
-Check DNS A records and HTTP responses using DNS History website
+| Flag | Description |
+|------|-------------|
+| `-d` | Single domain |
+| `-f` | File with one domain per line |
+| `-k` | SecurityTrails API key **(required)** |
+| `-v` | Verbose debug output |
+| `-a` | Append `nuclei` / `ffuf` commands to findings |
+| `-o` | Save results to file |
 
-optional arguments:
-  -h, --help                      # Show this help message and exit
-  -d DOMAIN, --domain DOMAIN      # Single domain to check
-  -f FILE, --file FILE            # File containing list of domains
-  -v, --verbose                   # Show detailed debug output
-  -a, --advanced                  # Generate nuclei and ffuf commands for successful results
-  -o OUTPUT, --output OUTPUT      # Output file to save results
-```
-### Examples
+**Examples:**
+```bash
+# Single domain
+python dns-history-checker.py -d example.com -k YOUR_API_KEY
 
-**Check a single domain:**
+# Bulk + save output
+python dns-history-checker.py -f domains.txt -k YOUR_API_KEY -o results.txt
+
+# Full recon mode
+python dns-history-checker.py -f domains.txt -k YOUR_API_KEY -a -v -o results.txt
 ```
-python3 dns-history-checker.py -d example.com -a -v
-```
-**Check multiple domains from a file:**
-```
-python3 dns-history-checker.py -f failed.txt -a -o results.txt
-```
-**Output Format:**
+
+## Output
+
 ```
 Finding №1 example.com
-123.123.123.123 example.com 404 969 No Title (Cloudflare: NO)
-
-Advanced Commands:
-nuclei -u https://123.123.123.123 -H "Host: example.com" -rl 100 -c 25 -es unknown
-ffuf -u https://123.123.123.123/FUZZ -H "Host: example.com" -mc 200 -w top.txt -ac -fs 0
+1.2.3.4 example.com 200 54321 Homepage Title (Cloudflare: NO)
+######
 ```
-- `123.123.123.123`: History IP address
-- `example.com:` Domain name
-- `404:` HTTP response code
-- `969:` Response length (in bytes)
-- `No Title:` HTML page title (if any)
 
-### License
-MIT License
+With `-a`:
+```
+Advanced Commands:
+nuclei -u https://1.2.3.4 -H "Host: example.com" -rl 100 -c 25 -es unknown
+ffuf -u https://1.2.3.4/FUZZ -H "Host: example.com" -mc 200 -w top.txt -ac -fs 0
+```
+
+## Notes
+
+- Each domain uses 2 API requests (historical + current A records)
+- Only responds to status `200` / `404` — redirects and WAF blocks are skipped
+- Certificate verification is disabled — origin servers behind CDNs often have mismatched certs
+
+## Disclaimer
+
+For authorized security testing only. The authors assume no liability for misuse.
