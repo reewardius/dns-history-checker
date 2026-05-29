@@ -16,6 +16,11 @@ ST_REQUEST_DELAY = 0.25
 
 SECURITYTRAILS_API_BASE = "https://api.securitytrails.com/v1"
 
+# Set to True to follow redirect chains (loses raw origin response).
+# Set to False to capture the first response only — recommended,
+# since a 3xx from the origin is a valid "server is alive" signal.
+FOLLOW_REDIRECTS = False
+
 
 class CustomAdapter(HTTPAdapter):
     """Adapter for managing TLS protocols — disables hostname/cert checks so
@@ -126,8 +131,18 @@ def get_a_record(domain, api_key, verbose=False):
     return list(ip_addresses)
 
 
+# Status codes that indicate the origin server responded (not a CDN block)
+VALID_STATUSES = (200, 301, 302, 303, 307, 308, 404)
+
+
 def make_http_request(ip, domain, verbose=False):
-    """Make HTTP/HTTPS request with Host header and check for Cloudflare"""
+    """
+    Make HTTP/HTTPS request with spoofed Host header.
+
+    Redirects are NOT followed — we check only the first response from the
+    origin IP. A 3xx redirect is still a valid "the server is alive" signal,
+    since CDNs/WAFs typically return 403/503, not redirects.
+    """
     headers = {"Host": domain}
     session = requests.Session()
     session.mount('https://', CustomAdapter())
@@ -140,13 +155,13 @@ def make_http_request(ip, domain, verbose=False):
             f"https://{ip}/",
             headers=headers,
             verify=False,
-            allow_redirects=True,
+            allow_redirects=FOLLOW_REDIRECTS,
             timeout=10,
         )
         if verbose:
             print(f"  Status: {response.status_code}", file=sys.stderr)
 
-        if response.status_code in (200, 404):
+        if response.status_code in VALID_STATUSES:
             return _parse_response(response, 'https', verbose)
         elif verbose:
             print(f"  Skipping HTTPS — status {response.status_code}", file=sys.stderr)
@@ -162,13 +177,13 @@ def make_http_request(ip, domain, verbose=False):
         response = session.get(
             f"http://{ip}/",
             headers=headers,
-            allow_redirects=True,
+            allow_redirects=FOLLOW_REDIRECTS,
             timeout=10,
         )
         if verbose:
             print(f"  Status: {response.status_code}", file=sys.stderr)
 
-        if response.status_code in (200, 404):
+        if response.status_code in VALID_STATUSES:
             return _parse_response(response, 'http', verbose)
         elif verbose:
             print(f"  Skipping HTTP — status {response.status_code}", file=sys.stderr)
@@ -183,15 +198,22 @@ def make_http_request(ip, domain, verbose=False):
 def _parse_response(response, protocol, verbose=False):
     """Extract metadata from an HTTP response object"""
     content_length = len(response.content)
-    title = 'No Title'
 
-    if response.headers.get('content-type', '').startswith('text/html'):
-        soup = BeautifulSoup(response.content, 'html.parser')
-        tag = soup.find('title')
-        if tag:
-            title = tag.text.strip().replace('\n', ' ').replace('\r', ' ')
-            if verbose:
-                print(f"  Title: {title}", file=sys.stderr)
+    # For redirects use the Location header as the title
+    if response.status_code in (301, 302, 303, 307, 308):
+        location = response.headers.get('Location', 'No Location')
+        title = f"-> {location}"
+        if verbose:
+            print(f"  Redirect: {location}", file=sys.stderr)
+    else:
+        title = 'No Title'
+        if response.headers.get('content-type', '').startswith('text/html'):
+            soup = BeautifulSoup(response.content, 'html.parser')
+            tag = soup.find('title')
+            if tag:
+                title = tag.text.strip().replace('\n', ' ').replace('\r', ' ')
+                if verbose:
+                    print(f"  Title: {title}", file=sys.stderr)
 
     server_header = response.headers.get('Server', '').lower()
     cloudflare = 'YES' if 'cloudflare' in server_header else 'NO'
