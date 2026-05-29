@@ -1,4 +1,5 @@
 import sys
+import time
 import requests
 import argparse
 from urllib3.exceptions import InsecureRequestWarning
@@ -9,6 +10,9 @@ from urllib3.util.ssl_ import create_urllib3_context
 
 # Suppress insecure SSL warnings
 requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
+
+# SecurityTrails rate limit: 5 req/sec → 0.25s delay between requests
+ST_REQUEST_DELAY = 0.25
 
 SECURITYTRAILS_API_BASE = "https://api.securitytrails.com/v1"
 
@@ -42,87 +46,82 @@ def clean_domain(domain):
         return domain.strip()
 
 
+def _st_get(url, api_key, label, verbose=False):
+    """
+    Make a single SecurityTrails API request.
+    Retries once with a 10s back-off on HTTP 429 (rate limit hit).
+    Returns parsed JSON or None.
+    """
+    headers = {"APIKEY": api_key, "Accept": "application/json"}
+    for attempt in range(2):
+        try:
+            if verbose:
+                print(f"  GET {url}", file=sys.stderr)
+            resp = requests.get(url, headers=headers, timeout=15)
+            if verbose:
+                print(f"  Status: {resp.status_code}", file=sys.stderr)
+
+            if resp.status_code == 200:
+                return resp.json()
+            elif resp.status_code == 401:
+                print("  [ERROR] Invalid or missing SecurityTrails API key.", file=sys.stderr)
+                sys.exit(1)
+            elif resp.status_code == 429:
+                wait = 10 * (attempt + 1)
+                print(f"  [WARN] Rate limit hit on {label} — retrying in {wait}s...", file=sys.stderr)
+                time.sleep(wait)
+            else:
+                if verbose:
+                    print(f"  {label} returned {resp.status_code}: {resp.text[:200]}", file=sys.stderr)
+                return None
+        except requests.RequestException as e:
+            if verbose:
+                print(f"  Error on {label}: {e}", file=sys.stderr)
+            return None
+    print(f"  [ERROR] Giving up on {label} after rate limit retries.", file=sys.stderr)
+    return None
+
+
 def get_a_record(domain, api_key, verbose=False):
     """
     Fetch unique A records via SecurityTrails API.
 
     Uses two endpoints:
-      1. /domain/{domain}/dns/history/a  — historical A records
-      2. /domain/{domain}                — current DNS records (fallback)
+      1. /v1/history/{domain}/dns/a  — historical A records
+      2. /v1/domain/{domain}/dns/a   — current A records
     """
-    headers = {
-        "APIKEY": api_key,
-        "Accept": "application/json",
-    }
     ip_addresses = set()
 
     # ── 1. Historical A records ──────────────────────────────────────────────
-    url = f"{SECURITYTRAILS_API_BASE}/history/{domain}/dns/a"
-    if verbose:
-        print(f"  GET {url}", file=sys.stderr)
+    data = _st_get(
+        f"{SECURITYTRAILS_API_BASE}/history/{domain}/dns/a",
+        api_key, "history", verbose
+    )
+    if data:
+        for record in data.get("records", []):
+            for val in record.get("values", []):
+                ip = val.get("ip")
+                if ip:
+                    ip_addresses.add(ip)
+                    if verbose:
+                        print(f"  Historical IP: {ip}", file=sys.stderr)
 
-    try:
-        resp = requests.get(url, headers=headers, timeout=15)
-        if verbose:
-            print(f"  Status: {resp.status_code}", file=sys.stderr)
+    # Respect 5 req/sec rate limit between the two API calls
+    time.sleep(ST_REQUEST_DELAY)
 
-        if resp.status_code == 200:
-            data = resp.json()
-            # Response structure:
-            # { "records": [ { "values": [ { "ip": "1.2.3.4", ... } ], ... } ] }
-            for record in data.get("records", []):
-                for val in record.get("values", []):
-                    ip = val.get("ip")
-                    if ip:
-                        ip_addresses.add(ip)
-                        if verbose:
-                            print(f"  Historical IP: {ip}", file=sys.stderr)
-        elif resp.status_code == 401:
-            print("  [ERROR] Invalid or missing SecurityTrails API key.", file=sys.stderr)
-            sys.exit(1)
-        elif resp.status_code == 429:
-            print("  [WARN] Rate limit exceeded for SecurityTrails API.", file=sys.stderr)
-        else:
-            if verbose:
-                print(f"  History endpoint returned {resp.status_code}: {resp.text[:200]}", file=sys.stderr)
-
-    except requests.RequestException as e:
-        if verbose:
-            print(f"  Error fetching historical A records: {e}", file=sys.stderr)
-
-    # ── 2. Current DNS records (fallback / supplement) ────────────────────────
-    url_current = f"{SECURITYTRAILS_API_BASE}/domain/{domain}/dns/a"
-    if verbose:
-        print(f"  GET {url_current}", file=sys.stderr)
-
-    try:
-        resp = requests.get(url_current, headers=headers, timeout=15)
-        if verbose:
-            print(f"  Status: {resp.status_code}", file=sys.stderr)
-
-        if resp.status_code == 200:
-            data = resp.json()
-            # Response structure:
-            # { "type": "a", "records": [ { "values": [ { "ip": "..." } ] } ] }
-            for record in data.get("records", []):
-                for val in record.get("values", []):
-                    ip = val.get("ip")
-                    if ip:
-                        ip_addresses.add(ip)
-                        if verbose:
-                            print(f"  Current IP: {ip}", file=sys.stderr)
-        elif resp.status_code == 401:
-            print("  [ERROR] Invalid or missing SecurityTrails API key.", file=sys.stderr)
-            sys.exit(1)
-        elif resp.status_code == 429:
-            print("  [WARN] Rate limit exceeded for SecurityTrails API.", file=sys.stderr)
-        else:
-            if verbose:
-                print(f"  Current endpoint returned {resp.status_code}: {resp.text[:200]}", file=sys.stderr)
-
-    except requests.RequestException as e:
-        if verbose:
-            print(f"  Error fetching current A records: {e}", file=sys.stderr)
+    # ── 2. Current A records ─────────────────────────────────────────────────
+    data = _st_get(
+        f"{SECURITYTRAILS_API_BASE}/domain/{domain}/dns/a",
+        api_key, "current", verbose
+    )
+    if data:
+        for record in data.get("records", []):
+            for val in record.get("values", []):
+                ip = val.get("ip")
+                if ip:
+                    ip_addresses.add(ip)
+                    if verbose:
+                        print(f"  Current IP: {ip}", file=sys.stderr)
 
     return list(ip_addresses)
 
