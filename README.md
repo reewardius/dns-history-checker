@@ -11,6 +11,22 @@ Discovers real origin IPs hidden behind Cloudflare and other CDNs using historic
 pip install requests beautifulsoup4
 ```
 
+## Workflow
+
+**Step 1:** Get failed resolve domains  
+Use `httpx` to probe subdomains and extract those that failed to resolve:
+```bash
+httpx -l subs.txt -probe | grep FAILED | awk '{gsub(/^https?:\/\//, "", $1); split($1, a, "/"); print a[1]}' > failed.txt
+```
+This creates a `failed.txt` file with domains that failed to respond.
+
+**Step 2:** Run dns-history-checker against the failed domains:
+```bash
+python dns-history-checker.py -f failed.txt -k YOUR_API_KEY -o results.txt
+```
+
+---
+
 ## Usage
 
 ```
