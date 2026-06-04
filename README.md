@@ -35,12 +35,14 @@ python dns-history-checker.py (-d DOMAIN | -f FILE) -k API_KEY [-v] [-a] [-o OUT
 
 | Flag | Description |
 |------|-------------|
-| `-d` | Single domain |
-| `-f` | File with one domain per line |
-| `-k` | SecurityTrails API key **(required)** |
-| `-v` | Verbose debug output |
-| `-a` | Append `nuclei` / `ffuf` commands to findings |
-| `-o` | Save results to file |
+| `-d DOMAIN` | Single domain to check |
+| `-f FILE` | File with domains, one per line |
+| `-k API_KEY` | SecurityTrails API key (required) |
+| `-v` | Verbose output — shows all requests and FP-check comparisons |
+| `-a` | Advanced mode — print nuclei + ffuf commands for each finding |
+| `-o FILE` | Save results to file (writes immediately, no buffering) |
+| `--skip-cloudflare` | Skip findings where Cloudflare is detected |
+| `--redirect` | Follow HTTP redirects (default: disabled) |
 
 **Examples:**
 ```bash
@@ -69,11 +71,34 @@ nuclei -u https://1.2.3.4 -H "Host: example.com" -rl 100 -c 25 -es unknown
 ffuf -u https://1.2.3.4/FUZZ -H "Host: example.com" -mc 200 -w top.txt -ac -fs 0
 ```
 
-## Notes
+## False positive filter
+ 
+Every finding is verified by making a second request to the same IP **without** a Host header and comparing:
+- Status code
+- Content length
+- Page title
 
-- Each domain uses 2 API requests (historical + current A records)
-- Only responds to status `200` / `404` — redirects and WAF blocks are skipped
-- Certificate verification is disabled — origin servers behind CDNs often have mismatched certs
+If all three match → the server responds identically to everyone → not a real origin for this domain → skipped.
+
+---
+ 
+## Examples
+ 
+Single domain, save to file, advanced commands:
+```bash
+python dns-history-checker.py -d target.com -k API_KEY -a -o results.txt
+```
+ 
+Bulk scan, skip Cloudflare IPs, verbose:
+```bash
+python dns-history-checker.py -f domains.txt -k API_KEY --skip-cloudflare -v
+```
+ 
+Follow redirects to get final page titles:
+```bash
+python dns-history-checker.py -d target.com -k API_KEY --redirect
+```
+
 
 ## Disclaimer
 
